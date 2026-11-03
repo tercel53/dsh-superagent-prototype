@@ -1,5 +1,6 @@
 /** Lifecycle, prompt/tool/skill decoration, message delivery, and budget retry tracking for orchestrator and worker DSH sessions. */
 import type { Context } from '@deepseek-ai/cordis'
+import * as skillFilesystem from '@deepseek-ai/dsh-skill-filesystem'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { MessageId } from '@deepseek-ai/dsh-llm'
 import { scopeParentOf } from '@deepseek-ai/dsh-scope'
@@ -7,7 +8,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session'
 import { dirname } from 'node:path'
 import { z } from 'zod'
 import { key, liveTicket, type Ticket } from '../core/index.ts'
-import { mandateInstructions, ticketOfSession } from '../executor/dsh.ts'
+import { mandateInstructions, ticketOfSession, workerSessionId } from '../executor/dsh.ts'
 import type { HealthEntry } from '../infra/health.ts'
 import { AgentDelivery, messageId } from './delivery.ts'
 import type { Effects } from './effects.ts'
@@ -30,6 +31,7 @@ export interface SessionsHost {
   /** The `models` health entry, which reports managed sessions waiting on a model-budget retry. */
   readonly health: HealthEntry
   readonly masterId: string
+  readonly projectSkillDirs: string[]
   readonly lifetime: AbortSignal
   closing(): boolean
   /** Execution environment variables for `ticket`, rendered into its worker's system prompt. */
@@ -104,8 +106,8 @@ export class Sessions {
     host.effects.handle('relay', ({ text }, requestId) => this.prompt(host.masterId, requestId, text, 'steer'), { ordered: true })
     host.effects.handle('notice', ({ value, summary }, name) => this.inject(name, value, summary), { ordered: true })
   }
-  /** Subscribes to host agent and session events so newly created sessions are decorated and model-budget retries are reflected in health. Call once at startup. */
-  install(): void {
+  /** Subscribe to new sessions and rebind already-loaded managed sessions after a Superagent reload. Call once at startup. */
+  async install(): Promise<void> {
     const ctx = this.ctx
     ctx.on('agent/disposed', ({ agent }) => {
       this.release(agent)
@@ -133,6 +135,10 @@ export class Sessions {
     ctx.on('agent/status', ({ agent, status }) => {
       if (status === 'idle' && !this.host.closing()) { this.retryHealth.clear(agent.id); this.updateModelHealth() }
     })
+    for (const id of [this.host.masterId, ...this.host.store.tickets.list().map(ticket => workerSessionId(ticket.id))]) {
+      const agent = ctx.agents.get(id as SessionId)
+      if (agent) await this.decorate(agent)
+    }
   }
   /** Resolves or creates session `id` in workspace `cwd`, initializes its role model, decorates it with prompts/skills/tools, sets `danger-full-access` permissions, and renames it to `title`. */
   async ensure(id: string, cwd: string, title: string, role: 'orchestrator' | 'worker'): Promise<Agent> {
@@ -248,9 +254,13 @@ export class Sessions {
       return `[dsh-superagent prompt revision ${version.revision}]\n${composed}\n${current ? mandateInstructions(current.mandate) : ''}`
     }, ...(master ? { complete: true } : {}) }))
     // A recreated skill scope (e.g. after the skills service restarts) starts empty, so reset `binding.skills` before rebinding.
-    const skillScope = agent.ctx.inject(['skills'], scope => {
+    const skillScope = agent.ctx.inject(['skills'], async scope => {
       binding.scope = scope
       binding.skills = undefined
+      // Shared roots supplement the current worktree; the filesystem provider's project ranks still win duplicates.
+      if (host.projectSkillDirs.length) await scope.plugin(skillFilesystem, {
+        providerName: 'superagent-project', includeDefaultRoots: false, customSkillDirs: host.projectSkillDirs,
+      })
       this.bindSkills(binding, host.prompts.current())
     })
     binding.disposers.push(() => { skillScope.dispose().catch((error: unknown) => { this.ctx.logger.warn('dsh-superagent could not release a skill scope: %s', String(error)) }) })

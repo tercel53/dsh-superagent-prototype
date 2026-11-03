@@ -1,6 +1,8 @@
 import { Context } from '@deepseek-ai/cordis'
+import SkillRegistry from '@deepseek-ai/dsh-skill'
+import * as skillFilesystem from '@deepseek-ai/dsh-skill-filesystem'
 import { bindScopeParent } from '@deepseek-ai/dsh-scope'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { DatabaseSync } from 'node:sqlite'
 import { join } from 'node:path'
@@ -180,7 +182,7 @@ beforeEach(async () => {
           restricts.set(sessionId, [...restricts.get(sessionId) ?? [], rule]); return () => {}
         }),
         guard: vi.fn((check: Guard) => { guards.set(sessionId, check); return () => {} }) })
-      agentCtx.reflect.provide('skills', { register: () => () => {} })
+      await agentCtx.plugin(SkillRegistry)
       agentCtx.reflect.provide('systemPrompt', { section: (spec: Section) => { sections.set(sessionId, spec); return () => {} } })
       const inbox = { nextTurn: [] as UserMessage[], nextStep: [] as UserMessage[],
         // A pending message taken out, as DSH's inbox does by its id.
@@ -215,6 +217,30 @@ beforeEach(async () => {
   deliveries.mockClear()
 })
 afterEach(async () => { expect(controller.prompt).not.toHaveBeenCalled(); await runtime?.stop(); vi.restoreAllMocks(); rmSync(directory, { recursive: true, force: true }) })
+
+it('loads shared project skills in main and worker sessions while keeping worktree versions and invocation policy', async () => {
+  const shared = join(directory, 'project', '.agents', 'skills')
+  const writeSkill = (root: string, name: string, body: string, disabled = false) => {
+    mkdirSync(join(root, name), { recursive: true })
+    writeFileSync(join(root, name, 'SKILL.md'), `---\nname: ${name}\ndescription: Project regression skill\n${disabled ? 'disable-model-invocation: true\n' : ''}---\n\n${body}`)
+  }
+  writeSkill(shared, 'project-check', 'Shared project instructions')
+  writeSkill(shared, 'manual-check', 'Human invocation only', true)
+  const { ticket, sessionId } = await acceptedTicket()
+  await restart({ projectSkillDirs: [shared] }); await runtime.ready
+  const context = (id: string) => (agents.get(id) as unknown as { ctx: Context }).ctx
+  for (const id of [runtime.masterId, sessionId]) {
+    const skills = context(id).skills
+    expect(await skills.get('project-check')).toMatchObject({ content: 'Shared project instructions', provider: 'superagent-project' })
+    expect((await skills.list()).find(skill => skill.name === 'manual-check')?.invocation.modelInvocable).toBe(false)
+  }
+  const worker = context(sessionId), cwd = ticket.execution!.directory
+  mkdirSync(join(cwd, '.git'), { recursive: true })
+  writeSkill(join(cwd, '.agents', 'skills'), 'project-check', 'Worktree instructions')
+  await worker.plugin(skillFilesystem, { watch: false })
+  expect(await worker.skills.get('project-check', { cwd })).toMatchObject({ content: 'Worktree instructions', source: 'project-agents' })
+  expect(await context(runtime.masterId).skills.get('project-check')).toMatchObject({ content: 'Shared project instructions' })
+})
 
 it('relays an explicit member mention as a candidate and creates the ticket, acknowledgement, subscription and worker on accept', async () => {
   const { trigger, ticket, sessionId } = await acceptedTicket()

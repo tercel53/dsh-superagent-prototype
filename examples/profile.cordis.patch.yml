@@ -7,6 +7,9 @@
 - id: dsh-superagent
   config:
     stateDir: <absolute path, for example /home/me/.dsh/state/superagent>
+    # Optional: project Skills shared by the main Session and workers; worktree-local names take precedence.
+    # projectSkillDirs:
+    #   - /home/me/widgets/.agents/skills
 # Feishu is optional: uncomment to enable its Source, then set the bot's lark-cli on the Feishu Source.
 # - id: dsh-superagent-feishu
 #   disabled: false

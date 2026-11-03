@@ -56,6 +56,26 @@ scripts/dsh-superagent --profile superagent-gitlab status
 
 执行器通过 `orchestrator_report` 的 `mr_iid` 绑定 MR，不能使用 `pr_number`。试点由人审批和合并 MR。
 
+## 项目 Skill 加载
+
+Superagent 主会话运行在状态目录，执行器运行在工单 worktree。默认发现只读取各自项目根目录中的 `.agents/skills`，不会自动读取原 yushu 工作目录。
+
+在 profile 的 `dsh-superagent` 配置中添加共享目录：
+
+```yaml
+- id: dsh-superagent
+  config:
+    stateDir: /absolute/state/directory
+    projectSkillDirs:
+      - /Users/xiexiaodong/workspace/code/gitlab/yushu/.agents/skills
+```
+
+初始化脚本会为新部署自动写入原仓库的 `.agents/skills`。已有部署需更新 profile；此配置变化会重载 Superagent，应在没有运行工单时更新。
+
+共享目录只注册到 Superagent 主会话和工单执行器，不进入其他个人会话。工单 worktree 中的同名项目 Skill 优先，原仓库目录补充缺少的 Skill。共享 Skill 始终读取原仓库的当前版本，而非任务基线；目录中的正文、脚本和引用文件也以该原目录为基准。
+
+Skill 的 `disable-model-invocation: true` 仍然生效：可发现不代表允许模型自动调用。目录新增、删除及文件头变化由 DSH 监听；正文在下一次加载时读取。此设置不修改原仓库、工单 worktree 或 Skill 文件。
+
 ## 认证与凭证文件
 
 `credential=stored` 使用 `glab` 已保存的身份。包装器清除环境中的 Token 覆盖，并固定 GitLab 主机。保存的登录配置必须在运行 DSH 的系统账户下可用。

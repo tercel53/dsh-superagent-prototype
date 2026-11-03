@@ -25,7 +25,7 @@ try {
   const db = join(stateDirectory, 'orchestrator.sqlite')
   if (existsSync(db)) throw new Error('State already exists; edit this deployment through the management panel')
   const reference = (value: number) => ({ get: () => value as never })
-  const machine = { stateDir: stateDirectory, promptMaxChars: reference(100000), admissionContextMaxPages: reference(10), admissionContextTimeoutMs: reference(15000) }
+  const machine = { stateDir: stateDirectory, projectSkillDirs: [join(repositoryPath, '.agents/skills')], promptMaxChars: reference(100000), admissionContextMaxPages: reference(10), admissionContextTimeoutMs: reference(15000) }
   const deployment = await resolveGitlabDeployment(machine, source, async argv => (await exec(argv[0]!, argv.slice(1), { maxBuffer: 1 << 20 })).stdout)
   await writeEnvironment(deployment, [])
   const quote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`
@@ -43,6 +43,6 @@ try {
     policy: { rules: [], sources: { gitlab: { allowed: allowed.map(id => ({ id })) } } }, eval: { mode: 'observe' },
     executor: { maxWorkers: 1, prepare } })
   const profile = join(stateDirectory, 'profile.cordis.patch.yml')
-  writeFileSync(profile, `- id: webserver\n  config:\n    host: 127.0.0.1\n    port: 3082\n- id: dsh-superagent\n  config:\n    stateDir: ${JSON.stringify(stateDirectory)}\n- id: dsh-superagent-github\n  disabled: true\n- id: dsh-superagent-gitlab\n  disabled: false\n`, { mode: 0o600 })
+  writeFileSync(profile, `- id: webserver\n  config:\n    host: 127.0.0.1\n    port: 3082\n- id: dsh-superagent\n  config:\n    stateDir: ${JSON.stringify(stateDirectory)}\n    projectSkillDirs: ${JSON.stringify(machine.projectSkillDirs)}\n- id: dsh-superagent-github\n  disabled: true\n- id: dsh-superagent-gitlab\n  disabled: false\n`, { mode: 0o600 })
   console.log(JSON.stringify({ repository: deployment.repository, account: deployment.gitlab!.login, stateDirectory, profile, paused: true }, null, 2))
 } finally { store?.close(); release() }

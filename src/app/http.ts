@@ -91,8 +91,8 @@ function failure(error: unknown): [number, Record<string, unknown>] {
   return [500, { error: error instanceof Error ? error.message : String(error) }]
 }
 
-function machineView({ stateDir, promptMaxChars, admissionContextMaxPages, admissionContextTimeoutMs }: Machine) {
-  return { stateDir, promptMaxChars: promptMaxChars.get(), admissionContextMaxPages: admissionContextMaxPages.get(),
+function machineView({ stateDir, projectSkillDirs, promptMaxChars, admissionContextMaxPages, admissionContextTimeoutMs }: Machine) {
+  return { stateDir, projectSkillDirs, promptMaxChars: promptMaxChars.get(), admissionContextMaxPages: admissionContextMaxPages.get(),
     admissionContextTimeoutMs: admissionContextTimeoutMs.get() }
 }
 function setupView(runtime: HttpHost) {
