@@ -46,14 +46,32 @@ export const GithubAccountsSchema = z.object({
   repository: z.string().trim().regex(/^([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)?$/, 'owner/name').default(''),
   cli: z.string().trim().default(''),
 })
+export const GitlabAccountsSchema = z.object({
+  host: z.string().trim().regex(/^[A-Za-z0-9.-]+(?::[0-9]+)?$/).default('gitlab.com'),
+  repository: z.string().trim().regex(/^([A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+)?$/).default(''),
+  cli: z.string().trim().default('glab'),
+  credential: z.enum(['environment', 'stored']).default('environment'),
+})
 export const FeishuBotSchema = z.object({ cli: z.string().trim().default('') })
 /** Source configuration keys that affect deployment setup and trigger a restart when changed. */
-export const SETUP_FIELDS: Readonly<Record<string, readonly string[]>> = { github: Object.keys(GithubAccountsSchema.shape), feishu: Object.keys(FeishuBotSchema.shape) }
+export const SETUP_FIELDS: Readonly<Record<string, readonly string[]>> = { github: Object.keys(GithubAccountsSchema.shape), gitlab: Object.keys(GitlabAccountsSchema.shape), feishu: Object.keys(FeishuBotSchema.shape) }
 
 export interface Deployment extends Machine {
   repository: string
-  github: { cli: string; login: string; noreply: string }
+  github?: RepositoryAccount
+  gitlab?: RepositoryAccount & { host: string; projectId: number; defaultBranch: string; url: string }
   feishu?: FeishuBot
+}
+export interface RepositoryAccount { cli: string; login: string; noreply: string }
+/** Repository identity selected by setup; GitHub remains the default for existing deployments. */
+export function repositoryAccount(deployment: Pick<Deployment, 'github' | 'gitlab'>): RepositoryAccount {
+  const account = deployment.gitlab ?? deployment.github
+  if (!account) throw new Error('No repository account configured')
+  return account
+}
+export function githubAccount(deployment: Pick<Deployment, 'github'>): RepositoryAccount {
+  if (!deployment.github) throw new Error('This deployment does not use GitHub')
+  return deployment.github
 }
 export interface FeishuBot { cli: string; appId: string; brand: 'feishu' | 'lark'; botId: string; name: string }
 

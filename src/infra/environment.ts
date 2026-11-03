@@ -5,9 +5,10 @@
  */
 import { lstat, mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { realpathSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { delimiter, join, resolve } from 'node:path'
 import type { SubprocessOutputReader, SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
-import type { Deployment } from '../deployment.ts'
+import { repositoryAccount, type Deployment } from '../deployment.ts'
 import { SetupError } from '../setup.ts'
 import { CliError } from './commands.ts'
 
@@ -15,7 +16,7 @@ const MARKER = '# Written by dsh-superagent on every start; edits are lost.'
 /** Markers of files written under the project's earlier names (`dsh-tag`, `dsh-go`, `dsh-freelancer`), which `dsh-superagent` owns and replaces too. */
 const LEGACY_MARKERS = ['dsh-tag', 'dsh-go', 'dsh-freelancer'].map(name => `# Written by ${name} on every start; edits are lost.`)
 /** Commands workers need, which `blockedCommands` cannot block: the shims and git. */
-export const WORKER_COMMANDS: readonly string[] = ['gh', 'git', 'lark-cli']
+export const WORKER_COMMANDS: readonly string[] = ['gh', 'glab', 'git', 'lark-cli']
 export const workerBin = (stateDir: string): string => join(stateDir, 'worker-bin')
 export const workerGitConfig = (stateDir: string): string => join(stateDir, 'worker-gitconfig')
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
@@ -76,8 +77,10 @@ async function own(file: string, text: string, mode = 0o644): Promise<void> {
  * Atomically writes worker CLI shims and the isolated git configuration file into the state directory, refusing to overwrite foreign files.
  * Each shim strips the shim directory from PATH before exec so wrapper scripts resolving `gh` or `lark-cli` by name reach the real binary.
  */
-export async function writeEnvironment(deployment: Pick<Deployment, 'stateDir' | 'repository' | 'github' | 'feishu'>, blockedCommands: readonly string[]): Promise<void> {
-  const { stateDir, repository, github, feishu } = deployment
+export async function writeEnvironment(deployment: Pick<Deployment, 'stateDir' | 'repository' | 'github' | 'gitlab' | 'feishu'>, blockedCommands: readonly string[]): Promise<void> {
+  const { stateDir, github, gitlab, feishu } = deployment
+  const account = repositoryAccount(deployment)
+  const host = gitlab?.host ?? 'github.com'
   const dir = workerBin(stateDir)
   await mkdir(dir, { recursive: true })
   const before = await readdir(dir)
@@ -97,10 +100,11 @@ export async function writeEnvironment(deployment: Pick<Deployment, 'stateDir' |
   ].join('\n')
   const run = (program: string): string => `${withoutShims}\nexec ${shellQuote(program)} "$@"`
   const fail = (message: string): string => `echo ${shellQuote(message)} >&2\nexit 1`
-  await shim('gh', run(github.cli))
+  await shim('gh', github ? run(github.cli) : fail('GitHub is not configured; use glab.'))
+  if (gitlab) await shim('glab', run(gitlab.cli))
   await shim('lark-cli', feishu ? run(feishu.cli) : fail('lark-cli is unavailable: this installation has no Feishu bot.'))
   for (const name of new Set(blockedCommands.filter(name => !WORKER_COMMANDS.includes(name)))) {
-    await shim(name, fail(`${name} is blocked in this installation; use gh, which acts as ${github.login}.`))
+    await shim(name, fail(`${name} is blocked in this installation; use ${gitlab ? 'glab' : 'gh'}, which acts as ${account.login}.`))
   }
   for (const name of before) if (!kept.has(name)) await unlink(join(dir, name))
   await own(workerGitConfig(stateDir), [
@@ -108,8 +112,8 @@ export async function writeEnvironment(deployment: Pick<Deployment, 'stateDir' |
     // Make git refuse to commit without an explicit identity set by the worker instead of guessing from the operator's OS user.
     '[user]', '\tuseConfigOnly = true',
     '[credential]', '\thelper =',
-    '[credential "https://github.com"]', `\thelper = ${gitQuote(credentialHelper(github.cli))}`,
-    '[url "https://github.com/"]', '\tinsteadOf = git@github.com:', '\tinsteadOf = ssh://git@github.com/',
+    `[credential ${gitQuote(`https://${host}`)}]`, `\thelper = ${gitQuote(credentialHelper(account.cli))}`,
+    `[url ${gitQuote(`https://${host}/`)}]`, `\tinsteadOf = git@${host}:`, `\tinsteadOf = ssh://git@${host}/`,
     // Include Git LFS filters because the operator's global gitconfig (which usually holds them) is ignored.
     '[filter "lfs"]', '\tclean = git-lfs clean -- %f', '\tsmudge = git-lfs smudge -- %f', '\tprocess = git-lfs filter-process', '\trequired = true',
   ].join('\n') + '\n')
@@ -135,11 +139,13 @@ export async function runAsWorker(subprocess: SubprocessRuntime, argv: string[],
 }
 
 /** Verifies that worker git invocations resolve the deployment's GitHub credential helper. */
-export async function verifyEnvironment(deployment: Pick<Deployment, 'github' | 'stateDir'>, subprocess: SubprocessRuntime, signal: AbortSignal): Promise<void> {
-  const { github, stateDir } = deployment
+export async function verifyEnvironment(deployment: Pick<Deployment, 'github' | 'gitlab' | 'stateDir'>, subprocess: SubprocessRuntime, signal: AbortSignal): Promise<void> {
+  const { stateDir } = deployment
+  const account = repositoryAccount(deployment)
+  const host = deployment.gitlab?.host ?? 'github.com'
   // `-z` separates fields with NUL and never quotes paths.
-  const helpers = (await runAsWorker(subprocess, ['git', 'config', '-z', '--show-origin', '--get-all', 'credential.https://github.com.helper'], stateDir, AbortSignal.any([signal, AbortSignal.timeout(60_000)])).catch(() => '')).split('\0')
-  if (helpers.join('\0') !== [`file:${workerGitConfig(stateDir)}`, credentialHelper(github.cli), ''].join('\0')) throw new SetupError('gitTooOld')
+  const helpers = (await runAsWorker(subprocess, ['git', 'config', '-z', '--show-origin', '--get-all', `credential.https://${host}.helper`], stateDir, AbortSignal.any([signal, AbortSignal.timeout(60_000)])).catch(() => '')).split('\0')
+  if (helpers.join('\0') !== [`file:${workerGitConfig(stateDir)}`, credentialHelper(account.cli), ''].join('\0')) throw new SetupError('gitTooOld')
 }
 
 /**
@@ -154,4 +160,32 @@ export async function verifyDirectory(directory: string, subprocess: SubprocessR
   const scoped = output.split('\0')
   const local = scoped.flatMap((scope, index) => index % 2 === 0 && (scope === 'local' || scope === 'worktree') ? [scoped[index + 1]!.split('\n')[0]!] : [])
   if (local.length) throw new Error(`The git configuration of the repository in ${directory} sets ${local.join(', ')}, which the agent's git would also read; remove them.`)
+}
+
+/** Create a host-bound CLI wrapper so DSH can strip token-shaped variables without losing the configured identity. */
+export async function writeGitlabCli(stateDir: string, cli: string, host: string, credential: 'environment' | 'stored'): Promise<string> {
+  await mkdir(stateDir, { recursive: true, mode: 0o700 })
+  const token = credential === 'environment' ? process.env.GITLAB_PAT : undefined
+  if (credential === 'environment' && !token) throw new Error('GITLAB_PAT is missing; provide it at startup or select stored glab credentials')
+  if (token && /[\r\n]/.test(token)) throw new Error('GITLAB_PAT must not contain line breaks')
+  // Account checks must not overwrite the wrapper or credential used by a running deployment.
+  const identity = createHash('sha256').update(JSON.stringify([cli, host, credential, token])).digest('hex').slice(0, 24)
+  const directory = join(stateDir, 'gitlab-auth', identity)
+  await mkdir(directory, { recursive: true, mode: 0o700 })
+  const secret = join(directory, 'gitlab-credential')
+  if (token) await own(secret, `${MARKER}\n${host}\n${token}\n`, 0o600)
+  const wrapper = join(directory, 'gitlab-cli')
+  await own(wrapper, `#!/bin/sh\n${MARKER}
+export GITLAB_HOST=${shellQuote(host)}
+unset GITLAB_PAT GITLAB_TOKEN GITLAB_ACCESS_TOKEN OAUTH_TOKEN CI_JOB_TOKEN
+if [ ${shellQuote(credential)} = 'environment' ] && [ -f ${shellQuote(secret)} ] && [ "$(sed -n '2p' ${shellQuote(secret)})" = ${shellQuote(host)} ]; then
+  GITLAB_TOKEN=$(sed -n '3p' ${shellQuote(secret)})
+  export GITLAB_TOKEN
+elif [ ${shellQuote(credential)} = 'environment' ]; then
+  echo 'GitLab credentials do not match this host' >&2
+  exit 1
+fi
+exec ${shellQuote(cli)} "$@"
+`, 0o700)
+  return wrapper
 }

@@ -19,6 +19,7 @@ export function family<V, A extends unknown[] = [string]>(prefix: string, format
 }
 
 export const KV = {
+  gitlab: { since: record<string>('gitlab-since') },
   /** Store: current database schema version. */
   store: { schema: record<number>('schema') },
   /** Settings: current revision, per-block revision, and saved settings snapshots (including the current one). */

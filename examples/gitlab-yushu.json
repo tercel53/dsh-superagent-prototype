@@ -1,0 +1,9 @@
+{
+  "host": "gitlab.daikuan.qihoo.net",
+  "repository": "360shuke/yushu",
+  "cli": "/opt/homebrew/bin/glab",
+  "credential": "stored",
+  "allowSelfRequests": true,
+  "repositoryPath": "/Users/xiexiaodong/workspace/code/gitlab/yushu",
+  "allowed": ["xiexiaodong-jk"]
+}

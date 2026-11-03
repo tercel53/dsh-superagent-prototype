@@ -399,10 +399,13 @@ Some generic modules still refer directly to GitHub or Feishu:
 
 `src/sources/github.ts` and `src/sources/feishu.ts` are also the entries of the two Source plugins, built by `tsdown.config.ts` and exported in `package.json` as `./github-watch` and `./feishu-watch`. The bundle's `cordis.patch.yml` inserts the three plugins, with Feishu disabled.
 
+| `src/sources/gitlab.ts`, `gitlab-deployment.ts`, `gitlab-read.ts`, `gitlab-channel.ts`, `gitlab-merge.ts` | GitLab CE source, account checks, context reads, note delivery and MR binding |
+
 ## Tests
 
 | Test | Covers |
 | --- | --- |
+| `tests/gitlab.spec.ts` | GitLab authorization, event replay, MR lifecycle, credentials and REST boundaries |
 | `tests/core-engine.spec.ts` | Domain rules on in-memory repositories: receiving, Eval, fan-out, resume and stop, interrupted Assignments, the pause, Policy changes, reports and outcomes, attaching, replies, failed deliveries and dismissed problems |
 | `tests/stage.spec.ts` | The Ticket stages, row by row |
 | `tests/policy.spec.ts` | Source scope, the gate, the admission table, Mandate revalidation, the Policy version, settings migrations and assessment outcomes |

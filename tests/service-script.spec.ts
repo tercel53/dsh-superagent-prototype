@@ -232,3 +232,9 @@ it('does not signal a process that took the recorded service PID, and keeps a st
   expect(await run('stop', '--stop-timeout', '1')).toMatchObject({ code: 1, stderr: expect.stringContaining('Graceful stop timed out') })
   expect(existsSync(join(control('superagent'), 'manually-stopped'))).toBe(true)
 }, 20_000)
+
+it('tolerates non-UTF-8 bytes in process arguments while locating the service', async () => {
+  const pid = sleeper()
+  writeFileSync(join(root, 'ps.txt'), Buffer.concat([Buffer.from(service(pid) + ' --unrelated='), Buffer.from([0xe8]), Buffer.from('\n')]))
+  expect(await status('superagent')).toMatchObject({ pids: [pid] })
+})

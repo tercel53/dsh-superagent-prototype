@@ -1,0 +1,7 @@
+#!/bin/sh
+# Run the isolated yushu pilot using project-local DSH dependencies and data.
+set -eu
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+export DSH_HOME="$ROOT/.artifacts/dsh-home"
+export PATH="$ROOT/.artifacts/dsh-runtime/node_modules/.bin:$PATH"
+exec "$ROOT/scripts/dsh-superagent" --profile superagent-gitlab "$@"

@@ -30,6 +30,10 @@ Read the numbered documents in order; each builds only on the ones before it.
 - [007 Architecture](docs/007-architecture.md)
 - [008 Cookbook](docs/008-cookbook.md): adding a Source
 
+## GitLab pilot
+
+GitLab CE 15.9 adaptation and the yushu pilot setup are documented in [GitLab pilot](docs/gitlab-pilot.md).
+
 ## Development
 
 `pnpm check` runs the typecheck, the tests and the build.

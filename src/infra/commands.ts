@@ -1,4 +1,5 @@
 /** Subprocess wrapper for running gh, lark-cli, and git commands under the deployment's configured accounts. */
+import { githubAccount } from '../deployment.ts'
 import { execFile } from 'node:child_process'
 import { basename } from 'node:path'
 import { promisify } from 'node:util'
@@ -73,7 +74,7 @@ export class Commands {
     } catch (error) { throw commandError(error, program) }
   }
   /** Runs the agent's GitHub CLI and parses its JSON output; callers should prefer `api`, which is restricted to the configured repository and validates output. */
-  async gh<T>(args: string[]): Promise<T> { return JSON.parse(await this.run(this.deployment.github.cli, args)) as T }
+  async gh<T>(args: string[]): Promise<T> { return JSON.parse(await this.run(githubAccount(this.deployment).cli, args)) as T }
   /**
    * Calls the GitHub API on a path within the configured repository, validating JSON output when a schema is provided
    * or returning raw CLI output (such as raw files or `--include` headers) when omitted.
@@ -82,7 +83,7 @@ export class Commands {
   async api<T>(schema: z.ZodType<T>, path: string, ...flags: string[]): Promise<T>
   async api(path: string, ...flags: string[]): Promise<string>
   async api<T>(schema: z.ZodType<T> | string, ...rest: string[]): Promise<T | string> {
-    if (typeof schema === 'string') return this.run(this.deployment.github.cli, ['api', this.path(schema), ...rest])
+    if (typeof schema === 'string') return this.run(githubAccount(this.deployment).cli, ['api', this.path(schema), ...rest])
     const [path = '', ...flags] = rest
     return schema.parse(await this.gh(['api', this.path(path), ...flags]))
   }
@@ -95,6 +96,23 @@ export class Commands {
     const outside = /^\/|^[a-z]+:|(^|\/)\.\.?(\/|\?|$)/i.test(path)
     if (outside) throw new Error('GitHub calls are restricted to the configured repository')
     return path ? `repos/${this.repository}/${path}` : `repos/${this.repository}`
+  }
+  /** Call GitLab REST v4 within the configured project only. */
+  async gitlab<T>(schema: z.ZodType<T>, path: string, ...flags: string[]): Promise<T> {
+    const account = this.deployment.gitlab
+    if (!account) throw new Error('GitLab is not configured')
+    if (/^\/|^[a-z]+:|(^|\/)\.\.?(\/|\?|$)|[\\#]/i.test(path)) throw new Error('GitLab calls are restricted to the configured project')
+    const endpoint = `projects/${account.projectId}${path ? `/${path}` : ''}`
+    return schema.parse(JSON.parse(await this.run(account.cli, ['api', '--hostname', account.host, endpoint, ...flags])))
+  }
+  /** Explicit pagination works with glab versions that stream --paginate responses as separate JSON arrays. */
+  async gitlabPages<T>(item: z.ZodType<T>, path: string): Promise<T[]> {
+    const result: T[] = []
+    for (let page = 1; ; page++) {
+      const rows = await this.gitlab(z.array(item), `${path}${path.includes('?') ? '&' : '?'}per_page=100&page=${page}`)
+      result.push(...rows)
+      if (rows.length < 100) return result
+    }
   }
   /**
    * Runs the Feishu bot's `lark-cli` and returns the JSON `data` payload.

@@ -1,4 +1,5 @@
 /** Probes repository and account CLIs, configures the worker execution environment and command shims, and tracks setup readiness. */
+import { resolveGitlabDeployment } from '../sources/gitlab-deployment.ts'
 import type { Context } from '@deepseek-ai/cordis'
 import { UserError } from '../core/index.ts'
 import { SETUP_FIELDS, resolveDeployment, resolveFeishuBot, workerProbe, type Deployment, type Machine } from '../deployment.ts'
@@ -14,7 +15,7 @@ export interface SetupHost {
 }
 
 const setupFields = (settings: Settings) =>
-  JSON.stringify(Object.entries(SETUP_FIELDS).map(([id, keys]) => keys.map(key => settings.sources[id]?.config[key] ?? '')))
+  JSON.stringify(Object.entries(SETUP_FIELDS).map(([id, keys]) => [...(id === 'gitlab' ? [settings.sources[id]?.enabled] : []), ...keys.map(key => settings.sources[id]?.config[key] ?? '')]))
 export const setupChanged = (before: Settings, after: Settings): boolean => setupFields(before) !== setupFields(after)
 
 /**
@@ -61,7 +62,7 @@ export class Setup {
   async checkAccounts(block: SettingsBlock, settings: Settings): Promise<void> {
     const { machine } = this.host
     const check = block === 'source:feishu' ? resolveFeishuBot(machine, settings.sources.feishu?.config, this.probe())
-      : resolveDeployment(machine, settings.sources.github?.config, this.probe())
+      : this.repository(settings)
     await check.catch((error: unknown) => { if (!(error instanceof SetupError) || error.place === block.slice(7)) throw error })
   }
   async blockCommands(blocked: readonly string[]): Promise<void> {
@@ -73,10 +74,19 @@ export class Setup {
     const { context, machine, lifetime } = this.host
     return workerProbe(context.subprocess, machine.stateDir, machine.stateDir, lifetime)
   }
+  private repository(settings: Settings): Promise<Deployment> {
+    const { machine } = this.host
+    const gitlab = settings.sources.gitlab
+    if (gitlab?.enabled) {
+      if (settings.sources.github?.enabled) throw new SetupError('gitlabSetup', { output: 'Enable only one repository provider: GitHub or GitLab.' })
+      return resolveGitlabDeployment(machine, gitlab.config, this.probe(), this.path)
+    }
+    return resolveDeployment(machine, settings.sources.github?.config, this.probe(), this.path)
+  }
   private async resolve(settings: Settings): Promise<Deployment> {
     const { context, machine, lifetime } = this.host
     const probe = this.probe()
-    const deployment = await resolveDeployment(machine, settings.sources.github?.config, probe)
+    const deployment = await this.repository(settings)
     const feishu = await resolveFeishuBot(machine, settings.sources.feishu?.config, probe).catch((error: unknown) => {
       if (!(error instanceof SetupError)) throw error
       this.feishuProblem = error.problem

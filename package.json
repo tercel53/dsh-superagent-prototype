@@ -14,6 +14,7 @@
       "default": "./lib/index.js"
     },
     "./client": "./lib/client.js",
+    "./gitlab-watch": "./lib/gitlab-watch.js",
     "./github-watch": "./lib/github-watch.js",
     "./feishu-watch": "./lib/feishu-watch.js",
     "./package.json": "./package.json",
